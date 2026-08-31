@@ -10,6 +10,20 @@ export const bulletPattern = /^\s*([\*\-])\s+/  // Only * and -, requires space 
 export function groupListIssues(issues, parsedDocuments) {
   const listIssues = []
   const otherIssues = []
+
+  // Log scanner output before UDOIT filters or groups any list issues.
+  console.groupCollapsed('[Lists] Equal Access issues received')
+  console.table(issues.map(issue => ({
+    issueId: issue.id,
+    contentItemId: issue.contentItemId,
+    scanRuleId: issue.scanRuleId,
+    status: issue.status,
+    fixedOn: issue.fixedOn,
+    xpath: issue.xpath,
+    html: Html.getIssueHtml(issue)
+  })))
+  console.log('[Lists] Raw Equal Access issues', issues)
+  console.groupEnd()
   
   issues.forEach(issue => {
     if (issue.scanRuleId === 'list_markup_review') {
