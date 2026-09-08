@@ -3,7 +3,7 @@ import { UFIXIT_OPTIONS } from '../../Services/Constants'
 import MagicIcon from '../Icons/MagicIcon'
 import * as Html from '../../Services/Html'
 import './SensoryMisuseForm.css'
-import { numberedPattern, letteredPattern, bulletPattern } from '../../Services/Lists'
+import { numberedPattern, romanPattern, letteredPattern, bulletPattern } from '../../Services/Lists'
 
 export default function ListForm({
   t,
@@ -130,10 +130,21 @@ export default function ListForm({
   }
 
   const detectListType = (text) => {
-    if (text.match(numberedPattern)) return 'ol'
-    if (text.match(letteredPattern)) return 'ol'
-    if (text.match(bulletPattern)) return 'ul'
-    return 'ul'
+    if (text.match(numberedPattern)) return { tagName: 'ol', attributes: '' }
+
+    let match = text.match(romanPattern)
+    if (match) {
+      const type = match[1] === match[1].toUpperCase() ? 'I' : 'i'
+      return { tagName: 'ol', attributes: ` type="${type}"` }
+    }
+
+    match = text.match(letteredPattern)
+    if (match) {
+      const type = match[1] === match[1].toUpperCase() ? 'A' : 'a'
+      return { tagName: 'ol', attributes: ` type="${type}"` }
+    }
+
+    return { tagName: 'ul', attributes: '' }
   }
 
   const handleAutoFix = () => {
@@ -148,7 +159,30 @@ export default function ListForm({
     
     const parser = new DOMParser()
     const doc = parser.parseFromString(currentContent, 'text/html')
-    const elements = Array.from(doc.body.children)
+    let elements = Array.from(doc.body.children)
+
+    // Equal Access reports the containing element when list lines are
+    // separated by direct <br> elements. Treat those lines as list items.
+    if (elements.length === 1) {
+      const container = elements[0]
+      const children = Array.from(container.childNodes)
+      if (children.some(child => child.nodeName === 'BR')) {
+        const lines = []
+        let line = doc.createElement('div')
+
+        children.forEach(child => {
+          if (child.nodeName === 'BR') {
+            if (line.textContent.trim()) lines.push(line)
+            line = doc.createElement('div')
+          } else {
+            line.appendChild(child.cloneNode(true))
+          }
+        })
+
+        if (line.textContent.trim()) lines.push(line)
+        elements = lines
+      }
+    }
     
     if (elements.length === 0) return
 
@@ -157,7 +191,7 @@ export default function ListForm({
     const listType = detectListType(firstText)
 
     // Build semantic list
-    let listHtml = `<${listType}>\n`
+    let listHtml = `<${listType.tagName}${listType.attributes}>\n`
     elements.forEach(element => {
       let text = element.textContent.trim()
       if (!text) return
@@ -165,6 +199,7 @@ export default function ListForm({
       // Strip prefix from text content to know what to remove
       const cleanText = text
         .replace(numberedPattern, '')
+        .replace(romanPattern, '')
         .replace(letteredPattern, '')
         .replace(bulletPattern, '')
         .trim()
@@ -187,6 +222,7 @@ export default function ListForm({
         const originalText = firstTextNode.textContent
         const strippedText = originalText
           .replace(numberedPattern, '')
+          .replace(romanPattern, '')
           .replace(letteredPattern, '')
           .replace(bulletPattern, '')
       
@@ -195,7 +231,7 @@ export default function ListForm({
     
       listHtml += `  <li>${clone.innerHTML}</li>\n`
     })
-    listHtml += `</${listType}>`
+    listHtml += `</${listType.tagName}>`
 
     // Make the content change undoable
     editorRef.current.undoManager.transact(() => {
@@ -263,8 +299,9 @@ export default function ListForm({
       issue.id = firstGroupedIssue.id
       bookmarkElement = Html.findElementWithXpath(doc, firstGroupedIssue.xpath)
 
-      issue.groupedIssues.forEach(groupedIssue => {
-        let tempElementToRemove = Html.findElementWithXpath(doc, groupedIssue.xpath)
+      const groupedXpaths = issue.groupedElementsXpaths || issue.groupedIssues.map(groupedIssue => groupedIssue.xpath)
+      groupedXpaths.forEach(xpath => {
+        let tempElementToRemove = Html.findElementWithXpath(doc, xpath)
         if (tempElementToRemove && tempElementToRemove.parentNode) {
           elementsToRemove.push(tempElementToRemove)
         }
