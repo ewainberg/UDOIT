@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { formNameFromRule } from '../../Services/Ufixit'
-import { ISSUE_FILTER } from '../../Services/Constants'
+import { getAriaAttributeDecision, getReportedAriaAttributes } from '../../Services/AriaAttributes'
 import InfoIcon from '../Icons/InfoIcon'
 
 export default function DecisionQuestion ({
@@ -41,7 +41,15 @@ export default function DecisionQuestion ({
 
     let tempFormName = formNameFromRule(tempActiveIssue.scanRuleId)
 
-    if(tempFormName === 'review_only') {
+    if(tempFormName === 'aria_attribute') {
+      const decision = getAriaAttributeDecision(tempActiveIssue.issueData)
+      const attributeNames = getReportedAriaAttributes(tempActiveIssue.issueData)
+      setFormSummary(attributeNames.length > 1
+        ? t('form.aria_attribute.group.question', { count: attributeNames.length })
+        : t(decision.questionKey, { attributeName: decision.attributeName }))
+      setShowLearnMore(false)
+    }
+    else if(tempFormName === 'review_only') {
       let ruleSummary = t(`rule.summary.${tempActiveIssue.scanRuleId}`)
       if(ruleSummary === `rule.summary.${tempActiveIssue.scanRuleId}`) {
         ruleSummary = formatEqualAccessMessage()

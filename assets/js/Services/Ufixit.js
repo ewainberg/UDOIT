@@ -1,6 +1,7 @@
 import AltTextForm from '../Components/Forms/AltTextForm'
 import AnchorTextForm from '../Components/Forms/AnchorTextForm'
 import AriaRoleForm from '../Components/Forms/AriaRoleForm'
+import AriaAttributeForm from '../Components/Forms/AriaAttributeForm'
 import BlockquoteForm from '../Components/Forms/BlockquoteForm'
 import ContrastForm from '../Components/Forms/ContrastForm'
 import EmbeddedContentTitleForm from '../Components/Forms/EmbeddedContentTitleForm'
@@ -65,7 +66,7 @@ export const disabilityTypes = {
 const formTypes = {
   [formNames.ALT_TEXT]: AltTextForm,
   [formNames.ANCHOR_TEXT]: AnchorTextForm,
-  // [formNames.ARIA_ATTRIBUTE]: AriaAttributeForm,
+  [formNames.ARIA_ATTRIBUTE]: AriaAttributeForm,
   [formNames.ARIA_ROLE]: AriaRoleForm,
   [formNames.BLOCKQUOTE]: BlockquoteForm,
   [formNames.CONTRAST]: ContrastForm,
@@ -156,11 +157,13 @@ const rulesToFormNameMap = {
   a_text_purpose: formNames.ANCHOR_TEXT,
   area_alt_exists: formNames.ANCHOR_TEXT,
   
-  // aria_attribute_allowed: formNames.ARIA_ATTRIBUTE,
-  // aria_attribute_conflict: formNames.ARIA_ATTRIBUTE,
-  // aria_attribute_exists: formNames.ARIA_ATTRIBUTE,
-  // aria_attribute_required: formNames.ARIA_ATTRIBUTE,
-  // aria_attribute_value_valid: formNames.ARIA_ATTRIBUTE,
+  aria_attribute_allowed: formNames.ARIA_ATTRIBUTE,
+  aria_attribute_conflict: formNames.ARIA_ATTRIBUTE,
+  aria_attribute_deprecated: formNames.ARIA_ATTRIBUTE,
+  aria_attribute_exists: formNames.ARIA_ATTRIBUTE,
+  aria_attribute_redundant: formNames.ARIA_ATTRIBUTE,
+  aria_attribute_required: formNames.ARIA_ATTRIBUTE,
+  aria_attribute_value_valid: formNames.ARIA_ATTRIBUTE,
 
   aria_role_valid: formNames.ARIA_ROLE,
   aria_role_allowed: formNames.ARIA_ROLE,
@@ -191,7 +194,6 @@ const rulesToFormNameMap = {
   // input_label_visible: formNames.INPUT_LABEL,
   // label_content_exists: formNames.INPUT_LABEL,
 
-  // aria_attribute_redundant: formNames.INVALID_ATTRIBUTE,
   // combobox_autocomplete_valid: formNames.INVALID_ATTRIBUTE,
   // combobox_haspopup_valid: formNames.INVALID_ATTRIBUTE,
   // dir_attribute_valid: formNames.INVALID_ATTRIBUTE,
