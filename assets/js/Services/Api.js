@@ -24,7 +24,8 @@ export default class Api {
       adminCourseReport: '/api/admin/courses/{course}/reports/full',
       adminReportHistory: '/api/admin/reports/account/{account}/term/{term}',
       adminUser: '/api/admin/users',
-      updatePreferences: '/api/users/{user}/preferences'
+      updatePreferences: '/api/users/{user}/preferences',
+      getAriaRecommendation: '/api/issues/{issue}/aria-recommendation'
     }
     this.instanceInfo = instanceInfo;
 
@@ -118,6 +119,21 @@ export default class Api {
         xpath: issue.xpath,
         markAsReviewed: markAsReviewed,
       }),
+    });
+  }
+
+  getAriaRecommendation(issueId, recommendation) {
+    let url = `${this.apiUrl}${this.endpoints.getAriaRecommendation}`;
+    url = url.replace("{issue}", issueId);
+
+    return fetch(url, {
+      method: "POST",
+      cache: "no-cache",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(recommendation),
     });
   }
 

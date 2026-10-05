@@ -1,9 +1,18 @@
 import * as Html from "../Html";
+import { ARIA_ATTRIBUTE_DEFINITIONS } from "./AriaAttributes";
 import { getAriaRecommendationPolicy } from "./AriaRecommendationPolicy";
 
 const MAX_TEXT_LENGTH = 300;
 const MAX_HTML_LENGTH = 4000;
 const MAX_CANDIDATE_IDS = 100;
+const MAX_EVIDENCE_VALUES = 25;
+
+const NATIVE_VALUE_ATTRIBUTES = {
+  "aria-valuemin": ["min"],
+  "aria-valuemax": ["max"],
+  "aria-valuenow": ["value"],
+  "aria-valuetext": ["value"],
+};
 
 function truncate(value, maxLength) {
   if (value.length <= maxLength) {
@@ -95,6 +104,80 @@ function getStructure(element) {
   };
 }
 
+function addEvidence(evidence, value, source) {
+  const normalizedValue = typeof value === "string" ? value.trim() : "";
+  if (
+    normalizedValue === "" ||
+    evidence.some((item) => item.value === normalizedValue) ||
+    evidence.length >= MAX_EVIDENCE_VALUES
+  ) {
+    return;
+  }
+  evidence.push({ value: normalizedValue, source });
+}
+
+function getLabelText(document, target) {
+  const labels = [];
+  if (target.id) {
+    document.querySelectorAll("label[for]").forEach((label) => {
+      if (label.getAttribute("for") === target.id) {
+        labels.push(label);
+      }
+    });
+  }
+  const wrappingLabel = target.closest("label");
+  if (wrappingLabel) {
+    labels.push(wrappingLabel);
+  }
+  return labels.map((label) => getText(label));
+}
+
+function getExactValueEvidence(document, target, attributeName) {
+  const evidence = [];
+  const definition = ARIA_ATTRIBUTE_DEFINITIONS[attributeName];
+  if (!definition) {
+    return evidence;
+  }
+
+  if (definition.valueType === "idref" || definition.valueType === "idrefs") {
+    getCandidateIds(document, target, attributeName).forEach((candidate) => {
+      addEvidence(evidence, candidate.id, `existing ID on <${candidate.tagName}>`);
+    });
+    return evidence;
+  }
+
+  const addTextEvidence = (value, source) => {
+    if (definition.valueType === "integer" || definition.valueType === "number") {
+      (value.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/g) || []).forEach((number) => {
+        addEvidence(evidence, number, `number in ${source}`);
+      });
+      return;
+    }
+    addEvidence(evidence, value, source);
+  };
+
+  (NATIVE_VALUE_ATTRIBUTES[attributeName] || []).forEach((name) => {
+    addEvidence(evidence, target.getAttribute(name), `native ${name} attribute`);
+  });
+
+  ["title", "placeholder", "value"].forEach((name) => {
+    addTextEvidence(target.getAttribute(name) || "", `native ${name} attribute`);
+  });
+  getLabelText(document, target).forEach((text) => {
+    addTextEvidence(text, "visible label");
+  });
+  addTextEvidence(getText(target), "element text");
+
+  Array.from(target.parentElement?.children || [])
+    .filter((element) => element !== target)
+    .slice(0, 10)
+    .forEach((element) =>
+      addTextEvidence(getText(element), "nearby visible text"),
+    );
+
+  return evidence;
+}
+
 export function collectAriaRecommendationContext({
   attributeName,
   activeIssue,
@@ -118,10 +201,13 @@ export function collectAriaRecommendationContext({
     ancestors: getAncestors(target),
     siblings: getSiblings(target),
     structure: getStructure(target),
+    evidence: getExactValueEvidence(document, target, attributeName),
   };
 
-  return policy.context.reduce((context, field) => {
+  const context = policy.context.reduce((context, field) => {
     context[field] = availableContext[field];
     return context;
   }, {});
+  context.evidence = availableContext.evidence;
+  return context;
 }

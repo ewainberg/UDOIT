@@ -4,19 +4,53 @@ import OptionFeedback from "../Widgets/OptionFeedback";
 import Combobox from "../Widgets/Combobox";
 import * as Html from "../../Services/Html";
 import { UFIXIT_OPTIONS } from "../../Services/Constants";
-import { ARIA_ATTRIBUTE_DEFINITIONS } from "../../Services/AriaAttributes";
+import { ARIA_ATTRIBUTE_DEFINITIONS } from "../../Services/llmRecs/AriaAttributes";
 import {
+  ARIA_RECOMMENDATION_ACTIONS,
   createAriaRecommendationRequest,
   validateAriaRecommendation,
-} from "../../Services/AriaRecommendation";
-import { collectAriaRecommendationContext } from "../../Services/AriaRecommendationContext";
+} from "../../Services/llmRecs/AriaRecommendation";
+import { collectAriaRecommendationContext } from "../../Services/llmRecs/AriaRecommendationContext";
 import Api from "../../Services/Api";
 
 const REMOVAL_ONLY_RULES = new Set([
   "aria_attribute_allowed",
-  "aria_attribute_conflict",
   "aria_attribute_redundant",
+  "aria_attribute_deprecated",
 ]);
+
+const CONFLICT_RULES = new Set(["aria_attribute_conflict"]);
+
+function getIssueMetadata(activeIssue) {
+  try {
+    return activeIssue.metadata ? JSON.parse(activeIssue.metadata) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getReportedAriaAttributes(activeIssue) {
+  const metadata = getIssueMetadata(activeIssue);
+  const messageValues = Array.isArray(metadata.messageArgs)
+    ? metadata.messageArgs
+    : [];
+  const reportedAttributes = messageValues.flatMap((value) =>
+    typeof value === "string" ? value.match(/aria-[a-z0-9-]+/gi) || [] : [],
+  );
+
+  return [...new Set(reportedAttributes)];
+}
+
+function getConflictHtmlAttribute(activeIssue) {
+  if (activeIssue.scanRuleId !== "aria_attribute_conflict") {
+    return "";
+  }
+
+  const metadata = getIssueMetadata(activeIssue);
+  return (metadata.messageArgs || []).find(
+    (value) => typeof value === "string" && !/^aria-/i.test(value),
+  ) || "";
+}
 
 export default function AriaAttributeForm({
   t,
@@ -37,6 +71,7 @@ export default function AriaAttributeForm({
   };
 
   const [attributeName, setAttributeName] = useState("");
+  const [attributeNames, setAttributeNames] = useState([]);
   const [attributeValue, setAttributeValue] = useState("");
   const [valueOptions, setValueOptions] = useState([]);
   const [recommendation, setRecommendation] = useState(null);
@@ -48,23 +83,27 @@ export default function AriaAttributeForm({
       return;
     }
 
-    const html = Html.getIssueHtml(activeIssue);
-    const element = Html.toElement(html);
-    const metadata = activeIssue.metadata
-      ? JSON.parse(activeIssue.metadata)
-      : {};
-    const metadataAttribute = metadata.messageArgs?.find((value) =>
-      /^aria-/i.test(value),
-    );
-    const ariaAttributes = Html.getAriaAttributes(html);
-    const detectedAttribute = metadataAttribute || ariaAttributes[0] || "";
-    const currentValue = detectedAttribute
-      ? Html.getAttribute(element, detectedAttribute) || ""
+    const reportedAttributes = getReportedAriaAttributes(activeIssue);
+    const detectedAttribute = reportedAttributes[0] || "";
+
+    setAttributeNames(reportedAttributes);
+    setAttributeName(detectedAttribute);
+    setRecommendation(null);
+    setRecommendationError("");
+  }, [activeIssue]);
+
+  useEffect(() => {
+    if (!activeIssue || !attributeName) {
+      return;
+    }
+
+    const element = Html.toElement(Html.getIssueHtml(activeIssue));
+    const currentValue = attributeName
+      ? Html.getAttribute(element, attributeName) || ""
       : "";
     const validValues =
-      ARIA_ATTRIBUTE_DEFINITIONS[detectedAttribute]?.finiteValues || [];
+      ARIA_ATTRIBUTE_DEFINITIONS[attributeName]?.finiteValues || [];
 
-    setAttributeName(detectedAttribute);
     setAttributeValue(currentValue);
     setRecommendation(null);
     setRecommendationError("");
@@ -91,7 +130,7 @@ export default function AriaAttributeForm({
     } else {
       setActiveOption("");
     }
-  }, [activeIssue]);
+  }, [activeIssue, attributeName]);
 
   useEffect(() => {
     updateHtmlContent();
@@ -146,6 +185,22 @@ export default function AriaAttributeForm({
           text: t("form.aria_attribute.msg.attribute_required"),
           type: "error",
         });
+      } else if (
+        ARIA_ATTRIBUTE_DEFINITIONS[attributeName]?.valueType === "integer" &&
+        !/^-?\d+$/.test(attributeValue.trim())
+      ) {
+        tempErrors[FORM_OPTIONS.SELECT_VALUE].push({
+          text: t("form.aria_attribute.msg.attribute_required"),
+          type: "error",
+        });
+      } else if (
+        ARIA_ATTRIBUTE_DEFINITIONS[attributeName]?.valueType === "number" &&
+        !Number.isFinite(Number(attributeValue.trim()))
+      ) {
+        tempErrors[FORM_OPTIONS.SELECT_VALUE].push({
+          text: t("form.aria_attribute.msg.attribute_required"),
+          type: "error",
+        });
       }
     }
 
@@ -163,7 +218,9 @@ export default function AriaAttributeForm({
   };
 
   const requestRecommendation = async () => {
-    if (REMOVAL_ONLY_RULES.has(activeIssue?.scanRuleId)) {
+    const removalOnly = REMOVAL_ONLY_RULES.has(activeIssue?.scanRuleId);
+    const conflict = CONFLICT_RULES.has(activeIssue?.scanRuleId);
+    if (removalOnly) {
       setRecommendation({
         action: "remove-attribute",
         confidence: "high",
@@ -187,10 +244,34 @@ export default function AriaAttributeForm({
       setRecommendationError(t("form.aria_attribute.ai.error"));
       return;
     }
+    const definition = ARIA_ATTRIBUTE_DEFINITIONS[attributeName];
+    const requiresEvidence = definition && !definition.finiteValues;
+    const canRecommendValue =
+      !requiresEvidence || (context.evidence || []).length > 0;
+    const allowedActions = conflict
+      ? [
+          ...(canRecommendValue
+            ? [ARIA_RECOMMENDATION_ACTIONS.SET_VALUE]
+            : []),
+          ARIA_RECOMMENDATION_ACTIONS.REMOVE_ATTRIBUTE,
+          ARIA_RECOMMENDATION_ACTIONS.MARK_AS_REVIEWED,
+        ]
+      : [
+          ...(canRecommendValue
+            ? [ARIA_RECOMMENDATION_ACTIONS.SET_VALUE]
+            : []),
+          ARIA_RECOMMENDATION_ACTIONS.MARK_AS_REVIEWED,
+        ];
     const recommendationRequest = createAriaRecommendationRequest({
       attributeName,
       currentValue: attributeValue,
-      context,
+      context: {
+        ...context,
+        conflictingHtmlAttribute: conflict
+          ? getConflictHtmlAttribute(activeIssue)
+          : undefined,
+      },
+      allowedActions,
     });
     if (!recommendationRequest) {
       setRecommendationError(t("form.aria_attribute.ai.error"));
@@ -205,10 +286,18 @@ export default function AriaAttributeForm({
         activeIssue.id,
         recommendationRequest,
       );
-      const responseBody = await response.json();
+      const responseText = await response.text();
+      let responseBody;
+      try {
+        responseBody = JSON.parse(responseText);
+      } catch {
+        throw new Error(t("form.aria_attribute.ai.error"));
+      }
       const result = validateAriaRecommendation(
         attributeName,
         responseBody?.data?.recommendation,
+        recommendationRequest.recommendation.allowedActions,
+        recommendationRequest.attribute.allowedValues,
       );
       if (!response.ok || !result.valid) {
         throw new Error(
@@ -241,6 +330,9 @@ export default function AriaAttributeForm({
   const canSelectValue =
     Boolean(ARIA_ATTRIBUTE_DEFINITIONS[attributeName]) &&
     !REMOVAL_ONLY_RULES.has(activeIssue?.scanRuleId);
+  const canRemoveAttribute =
+    REMOVAL_ONLY_RULES.has(activeIssue?.scanRuleId) ||
+    CONFLICT_RULES.has(activeIssue?.scanRuleId);
 
   const approveRecommendation = () => {
     if (recommendation.action === "set-value") {
@@ -257,6 +349,23 @@ export default function AriaAttributeForm({
   return (
     <>
       <div className="mb-2">
+        {attributeNames.length > 1 && (
+          <label>
+            {t("form.aria_attribute.name")}
+            <select
+              className="w-100"
+              disabled={isDisabled}
+              value={attributeName}
+              onChange={(event) => setAttributeName(event.target.value)}
+            >
+              {attributeNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button
           className="btn btn-secondary"
           type="button"
@@ -348,7 +457,7 @@ export default function AriaAttributeForm({
       >
         <RadioSelector
           activeOption={activeOption}
-          isDisabled={isDisabled || !attributeName}
+          isDisabled={isDisabled || !attributeName || !canRemoveAttribute}
           setActiveOption={setActiveOption}
           option={FORM_OPTIONS.DELETE_ATTRIBUTE}
           labelText={t("form.aria_attribute.label.remove")}

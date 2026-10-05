@@ -24,6 +24,7 @@ export function createAriaRecommendationRequest({
   attributeName,
   currentValue = "",
   context = {},
+  allowedActions = Object.values(ARIA_RECOMMENDATION_ACTIONS),
 }) {
   const normalizedAttributeName = normalizeAttributeName(attributeName);
   const definition = getDefinition(normalizedAttributeName);
@@ -33,30 +34,53 @@ export function createAriaRecommendationRequest({
     return null;
   }
 
+  const selectedContext = policy.context.reduce(
+    (selected, field) => {
+      selected[field] = context[field];
+      return selected;
+    },
+    { required: policy.context },
+  );
+  if (typeof context.conflictingHtmlAttribute === "string") {
+    selectedContext.conflictingHtmlAttribute = context.conflictingHtmlAttribute;
+  }
+  const allowedValues = definition.finiteValues
+    ? []
+    : Array.from(
+        new Set(
+          (context.evidence || [])
+            .map((evidence) => evidence?.value)
+            .filter((value) => typeof value === "string" && value.trim() !== ""),
+        ),
+      );
+  selectedContext.evidence = (context.evidence || []).filter(
+    (evidence) => allowedValues.includes(evidence?.value),
+  );
+
   return {
     attribute: {
       name: normalizedAttributeName,
       currentValue,
       valueType: definition.valueType,
       finiteValues: definition.finiteValues || [],
+      allowedValues,
     },
-    context: policy.context.reduce(
-      (selectedContext, field) => {
-        selectedContext[field] = context[field];
-        return selectedContext;
-      },
-      { required: policy.context },
-    ),
+    context: selectedContext,
     recommendation: {
       mode: policy.mode,
       question: definition.question,
-      allowedActions: Object.values(ARIA_RECOMMENDATION_ACTIONS),
+      allowedActions,
     },
   };
 }
 
 // AI output is a recommendation only. The form still validates and applies edits.
-export function validateAriaRecommendation(attributeName, recommendation) {
+export function validateAriaRecommendation(
+  attributeName,
+  recommendation,
+  allowedActions = Object.values(ARIA_RECOMMENDATION_ACTIONS),
+  allowedValues = [],
+) {
   const definition = getDefinition(attributeName);
   if (!definition || !recommendation || typeof recommendation !== "object") {
     return { valid: false, error: "invalid-recommendation" };
@@ -65,6 +89,9 @@ export function validateAriaRecommendation(attributeName, recommendation) {
   const { action, confidence, reason, value } = recommendation;
   if (!Object.values(ARIA_RECOMMENDATION_ACTIONS).includes(action)) {
     return { valid: false, error: "invalid-action" };
+  }
+  if (!allowedActions.includes(action)) {
+    return { valid: false, error: "disallowed-action" };
   }
   if (!CONFIDENCE_LEVELS.includes(confidence)) {
     return { valid: false, error: "invalid-confidence" };
@@ -83,6 +110,21 @@ export function validateAriaRecommendation(attributeName, recommendation) {
   }
   if (typeof value !== "string" || value.trim() === "") {
     return { valid: false, error: "missing-value" };
+  }
+  if (allowedValues.length > 0 && !allowedValues.includes(value)) {
+    return { valid: false, error: "not-in-evidence" };
+  }
+  if (
+    definition.valueType === "integer" &&
+    !/^-?\d+$/.test(value.trim())
+  ) {
+    return { valid: false, error: "invalid-integer-value" };
+  }
+  if (
+    definition.valueType === "number" &&
+    !Number.isFinite(Number(value.trim()))
+  ) {
+    return { valid: false, error: "invalid-number-value" };
   }
   if (
     definition.finiteValues &&

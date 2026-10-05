@@ -5,6 +5,7 @@ namespace App\Controller;
 use App\Entity\Issue;
 use App\Response\ApiResponse;
 use App\Services\LmsPostService;
+use App\Services\BedrockRecommendationService;
 use App\Services\EqualAccessService;
 use App\Services\SessionService;
 use App\Services\UtilityService;
@@ -163,6 +164,58 @@ class IssuesController extends ApiController
         $apiResponse->addError($e->getMessage());
       }
 
-      return new JsonResponse($apiResponse);
+        return new JsonResponse($apiResponse);
+    }
+
+    #[Route('/api/issues/{issue}/aria-recommendation', methods: ['POST'], name: 'get_aria_recommendation')]
+    public function getAriaRecommendation(
+        SessionService $sessionService,
+        Request $request,
+        BedrockRecommendationService $bedrockRecommendation,
+        Issue $issue
+    ) {
+        $apiResponse = new ApiResponse();
+
+        try {
+            $course = $issue->getContentItem()->getCourse();
+            if (!$this->userHasCourseAccess($course, $sessionService)) {
+                throw new \Exception('You do not have permission to access this issue.');
+            }
+
+            $recommendationRequest = json_decode($request->getContent(), true, 512, JSON_THROW_ON_ERROR);
+            if (!is_array($recommendationRequest)
+                || !is_array($recommendationRequest['recommendation'] ?? null)) {
+                throw new \Exception('Invalid AI recommendation request.');
+            }
+
+            $ruleActions = [
+                'aria_attribute_allowed' => ['remove-attribute', 'mark-as-reviewed'],
+                'aria_attribute_deprecated' => ['remove-attribute', 'mark-as-reviewed'],
+                'aria_attribute_redundant' => ['remove-attribute', 'mark-as-reviewed'],
+                'aria_attribute_conflict' => ['set-value', 'remove-attribute', 'mark-as-reviewed'],
+                'aria_attribute_exists' => ['set-value', 'mark-as-reviewed'],
+                'aria_attribute_required' => ['set-value', 'mark-as-reviewed'],
+                'aria_attribute_value_valid' => ['set-value', 'mark-as-reviewed'],
+            ];
+            $allowedActions = $ruleActions[$issue->getScanRuleId()] ?? null;
+            if ($allowedActions === null) {
+                throw new \Exception('This issue does not support AI recommendations.');
+            }
+
+            $finiteValues = $recommendationRequest['attribute']['finiteValues'] ?? [];
+            $evidenceValues = $recommendationRequest['attribute']['allowedValues'] ?? [];
+            if (empty($finiteValues) && empty($evidenceValues)) {
+                $allowedActions = array_values(array_diff($allowedActions, ['set-value']));
+            }
+
+            $recommendationRequest['recommendation']['allowedActions'] = $allowedActions;
+            $apiResponse->setData([
+                'recommendation' => $bedrockRecommendation->recommend($recommendationRequest),
+            ]);
+        } catch (\Throwable $e) {
+            $apiResponse->addError($e->getMessage());
+        }
+
+        return new JsonResponse($apiResponse);
     }
 }
