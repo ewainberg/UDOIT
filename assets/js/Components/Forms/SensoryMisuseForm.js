@@ -2,12 +2,16 @@ import React, { useEffect, useRef, useState } from 'react'
 import RadioSelector from '../Widgets/RadioSelector'
 import { UFIXIT_OPTIONS } from '../../Services/Constants'
 import * as Html from '../../Services/Html'
+import Api from '../../Services/Api'
+import { collectSensoryContext, getSuggestedText, SENSORY_WORDS, validateSensoryRecommendation } from '../../Services/SensoryRecommendation'
 // The SensoryMisuseForm.css file is a copy of the tinyMCE oxide skin file, which does not consistently load at runtime, so we include it here
 // Failure to do so often results in the TinyMCE editor not display, especially the first time the component is rendered.
 import './SensoryMisuseForm.css'
 
 export default function SensoryMisuseForm({
   t, 
+  instanceInfo,
+  activeContentItem,
   activeIssue, 
   handleIssueSave, 
   addMessage,
@@ -29,25 +33,7 @@ export default function SensoryMisuseForm({
 
   // equal access checks for these words - we can check for them while in tinymce
   // https://github.com/IBMa/equal-access/blob/83eaa932747d1a1156080c60849ff63029d5e293/accessibility-checker-engine/src/v4/rules/text_sensory_misuse.ts
-  const sensoryWords = [
-    "above", "below", "beside",
-    "big", "bigger", "biggest",
-    "bottom", "bottom-left", "bottom-right", "bottom-to-top",
-    "corner", "extra", "huge",
-    "large", "larger", "largest",
-    "left", "left-to-right",
-    "little", "lower", "medium",
-    "right", "right-to-left",
-    "rectangle", "round",
-    "shape", "size",
-    "small", "smaller", "smallest",
-    "square", "tiny",
-    "top", "top-left", "top-right", "top-to-bottom",
-    "triangle",
-    "upper",
-  ]
-
-  const sensoryWordRegexes = sensoryWords.map(word => ({
+  const sensoryWordRegexes = SENSORY_WORDS.map(word => ({
     word,
     regex: new RegExp(`\\b${word}\\b`, 'i')
   }))
@@ -58,6 +44,9 @@ export default function SensoryMisuseForm({
   const editorRef = useRef(null)
   
   const [sensoryErrors, setSensoryErrors] = useState([])
+  const [recommendation, setRecommendation] = useState(null)
+  const [recommendationError, setRecommendationError] = useState('')
+  const [recommendationLoading, setRecommendationLoading] = useState(false)
 
   useEffect(() => {
     // if the issue changes, pull new html and set tinymce's html
@@ -67,6 +56,8 @@ export default function SensoryMisuseForm({
     
     let html = Html.getIssueHtml(activeIssue)
     setEditorHtml(html);
+    setRecommendation(null)
+    setRecommendationError('')
     setFormErrors([]);
 
     const fixed = activeIssue.newHtml && (activeIssue.status === 1 || activeIssue.status === 3);
@@ -131,7 +122,57 @@ export default function SensoryMisuseForm({
 
   const handleEditorChange = (html) => {
     setEditorHtml(html)
+    setRecommendation(null)
     updatePreview(html)
+  }
+
+  const requestRecommendation = async () => {
+    setRecommendationLoading(true)
+    setRecommendationError('')
+    setRecommendation(null)
+    try {
+      const response = await new Api(instanceInfo).getSensoryRecommendation(activeIssue.id, {
+        html: editorHtml,
+        sensoryWords: sensoryErrors,
+        context: collectSensoryContext(activeContentItem?.body, activeIssue),
+      })
+      const result = await response.json()
+      if (!response.ok || result.errors?.length || !result.data?.recommendation) {
+        throw new Error(result.errors?.[0] || t('form.sensory_misuse.ai.error'))
+      }
+      const next = result.data.recommendation
+      if (!validateSensoryRecommendation(next, editorHtml)) {
+        if (next?.action === 'suggest-edit') {
+          setRecommendation({
+            action: 'manual-review',
+            confidence: 'medium',
+            reason: t('form.sensory_misuse.ai.manual_review_validation'),
+          })
+        } else {
+          throw new Error(t('form.sensory_misuse.ai.error'))
+        }
+      } else {
+        setRecommendation(next)
+      }
+    } catch (error) {
+      setRecommendationError(error.message || t('form.sensory_misuse.ai.error'))
+    } finally {
+      setRecommendationLoading(false)
+    }
+  }
+
+  const applyRecommendation = () => {
+    if (recommendation?.action !== 'suggest-edit'
+      || !validateSensoryRecommendation(recommendation, editorHtml)) return
+    editorRef.current?.setContent(recommendation.html)
+    handleEditorChange(recommendation.html)
+    setRecommendation(null)
+  }
+
+  const approveNoInstructions = () => {
+    if (recommendation?.action !== 'no-instructions') return
+    setActiveOption(FORM_OPTIONS.MARK_AS_REVIEWED)
+    setRecommendation(null)
   }
 
   const checkForSensoryWords = (html) => {
@@ -288,6 +329,34 @@ export default function SensoryMisuseForm({
             <div className="ufixit-widget-label mb-3">{t('form.sensory_misuse.label.none')}</div>
           )}
           <textarea id="sensory-misuse-textarea"></textarea>
+          <div className="mt-2">
+            <button type="button" className="btn btn-secondary" onClick={requestRecommendation} disabled={isDisabled || recommendationLoading || sensoryErrors.length === 0}>
+              {recommendationLoading ? t('form.sensory_misuse.ai.loading') : t('form.sensory_misuse.ai.request')}
+            </button>
+            {recommendationError && <p role="alert">{recommendationError}</p>}
+            {recommendation && <div className="mt-3" aria-live="polite">
+              {recommendation.action === 'suggest-edit' ? <>
+                <div className="ufixit-widget-label">{t('form.sensory_misuse.ai.suggested_revision')}</div>
+                <p className="mt-1 mb-2">{getSuggestedText(recommendation.html)}</p>
+                <p className="mb-2">{recommendation.reason} ({t(`form.sensory_misuse.ai.confidence.${recommendation.confidence}`)})</p>
+                <div className="flex-row align-items-center gap-2">
+                  <button type="button" className="btn btn-primary" onClick={applyRecommendation}>{t('form.sensory_misuse.ai.apply')}</button>
+                  <button type="button" className="btn btn-link" onClick={() => setRecommendation(null)}>{t('form.sensory_misuse.ai.dismiss')}</button>
+                </div>
+              </> : recommendation.action === 'no-instructions' ? <>
+                <div className="ufixit-widget-label">{t('form.sensory_misuse.ai.no_instructions_heading')}</div>
+                <p className="mt-1 mb-2">{recommendation.reason} ({t(`form.sensory_misuse.ai.confidence.${recommendation.confidence}`)})</p>
+                <div className="flex-row align-items-center gap-2">
+                  <button type="button" className="btn btn-primary" onClick={approveNoInstructions}>{t('form.sensory_misuse.ai.no_instructions')}</button>
+                  <button type="button" className="btn btn-link" onClick={() => setRecommendation(null)}>{t('form.sensory_misuse.ai.dismiss')}</button>
+                </div>
+              </> : <>
+                <div className="ufixit-widget-label">{t('form.sensory_misuse.ai.manual_review_heading')}</div>
+                <p className="mt-1 mb-2">{recommendation.reason}</p>
+                <button type="button" className="btn btn-link" onClick={() => setRecommendation(null)}>{t('form.sensory_misuse.ai.dismiss')}</button>
+              </>}
+            </div>}
+          </div>
         </div>
       </div>
 

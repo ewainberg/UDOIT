@@ -8,6 +8,7 @@ export default class Api {
       setReportData: '/api/reports/{report}/setdata',
       updateAndGetReport: '/api/courses/{course}/reports/update',
       getIssueContent: '/api/issues/{issue}/content',
+      getSensoryRecommendation: '/api/issues/{issue}/sensory-recommendation',
       saveIssue: '/api/issues/{issue}/save',
       reviewFile: '/api/files/{file}/review',
       postFile: '/api/files/{file}/post',
@@ -299,6 +300,19 @@ export default class Api {
       headers: {
         "Content-Type": "application/json",
       },
+    });
+  }
+
+  getSensoryRecommendation(issueId, request) {
+    let url = `${this.apiUrl}${this.endpoints.getSensoryRecommendation}`;
+    url = url.replace("{issue}", issueId);
+
+    return fetch(url, {
+      method: "POST",
+      cache: "no-cache",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
     });
   }
 

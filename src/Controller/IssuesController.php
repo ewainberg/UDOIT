@@ -8,6 +8,7 @@ use App\Services\LmsPostService;
 use App\Services\EqualAccessService;
 use App\Services\SessionService;
 use App\Services\UtilityService;
+use App\Services\SensoryRecommendationService;
 use Doctrine\Persistence\ManagerRegistry;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -164,5 +165,38 @@ class IssuesController extends ApiController
       }
 
       return new JsonResponse($apiResponse);
+    }
+
+    #[Route('/api/issues/{issue}/sensory-recommendation', methods: ['POST'], name: 'get_sensory_recommendation')]
+    public function getSensoryRecommendation(
+        SessionService $sessionService,
+        Request $request,
+        SensoryRecommendationService $recommendationService,
+        Issue $issue
+    ): JsonResponse {
+        $apiResponse = new ApiResponse();
+        try {
+            if ($issue->getScanRuleId() !== 'text_sensory_misuse') {
+                throw new \Exception('This issue does not support AI recommendations.');
+            }
+            if (!$this->userHasCourseAccess($issue->getContentItem()->getCourse(), $sessionService)) {
+                throw new \Exception('You do not have permission to access this issue.');
+            }
+            $payload = json_decode($request->getContent(), true, 512, JSON_THROW_ON_ERROR);
+            $html = $payload['html'] ?? null;
+            $words = $payload['sensoryWords'] ?? null;
+            $context = $payload['context'] ?? '';
+            if (!is_string($html) || trim($html) === '' || strlen($html) > 12000
+                || !is_array($words) || count($words) > 40
+                || !is_string($context) || strlen($context) > 3000) {
+                throw new \Exception('Invalid AI recommendation request.');
+            }
+            $words = array_values(array_filter($words, fn ($word) => is_string($word) && strlen($word) <= 40));
+            $apiResponse->setData(['recommendation' => $recommendationService->recommend($html, $words, $context)]);
+        } catch (\Throwable $e) {
+            $apiResponse->addError($e->getMessage());
+        }
+
+        return new JsonResponse($apiResponse);
     }
 }
